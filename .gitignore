@@ -13,3 +13,136 @@ log/*
 logs/
 parts/*
 json_results/*
+
+.claude/local/
+out/
+*.dbm
+# Build Artifacts & Distribution
+.pytest_cache/
+.nuxt/
+*.db
+# Updated: 2026-01-10
+coverage.json
+# Skill-specific credentials
+Thumbs.db
+.claude/settings.local.*.json
+ehthumbs.db
+*.pyo
+.claude/skills/*/*/*key*
+.venv/
+*.tsbuildinfo
+# Secrets and Credentials (CRITICAL)
+.env.*
+.claude/skills/*/*/*secret*
+.aws/config
+.uv-cache/
+.fseventsd
+secret-*.*
+# Python Cache & Bytecode
+# Version: 0.33.0
+# MoAI-ADK Package Distribution .gitignore
+.AppleDouble
+.vscode/
+*.sublime-project
+*_secret=*
+# Private keys (specific patterns to avoid false positives)
+*.pyc
+*.secret.*
+# IDE & Editors
+*.log
+*_secret.*
+*.pem
+.cursor/
+.claude/.env.local*
+*.sqlite
+.claude/settings.local.json
+*.sw?
+.DocumentRevisions-V100
+.LSOverride
+*-secret.*
+.claude/skills/*/.env*
+.#*
+*.backup
+*.njsproj
+.claude/skills/*/secrets/
+htmlcov/
+# Build Tools & Frameworks
+*.sublime-workspace
+.firebase/
+build/
+*.backup/
+.uv_cache/
+.Trashes
+.mypy_cache/
+*.sqlite3
+.VolumeIcon.icns
+# Credential patterns in environment files
+*.tmp
+# Certificate files
+*.egg-info/
+*-key.*
+# Purpose: Essential patterns for user projects
+.idea/
+.TemporaryItems
+*~
+api-key-*
+# Test Coverage
+# Linux
+*_backup_*/
+# Virtual Environments
+.env/
+.tscache/
+venv/
+*_key.*
+*.pyd
+# Logs & Temporary Files
+!.env.example
+# Node.js (for docs/Nextra)
+.moai-backups/
+# ===========================================
+*.p12
+.claude/skills/*/*/*token*
+.vercel/
+*_token=*
+.directory
+*.key.*
+env/
+# Deployment & CI/CD
+*.temp
+# Environment files
+.claude/plans/
+dist/
+secret-key-*
+# OS Files
+.aws/credentials
+*.swo
+*.egg
+*-secret-key.*
+node_modules/
+*.sln
+*.suo
+*.rdb
+private-key*
+*.bak
+# Claude Code Configuration
+[Dd]esktop.ini
+.ruff_cache/
+.turbo/
+*.jks
+.coverage
+*-api-key.*
+*.swp
+dist-ssr/
+# ============================================
+*.pfx
+# Backups
+# Windows
+.Spotlight-V100
+.netlify/
+.env
+# FIXED: Issue #237 - Replaced overly broad *key* and *secret* patterns
+# Mac
+.next/
+__pycache__/
+*-backup/
+# Cloud provider credentials

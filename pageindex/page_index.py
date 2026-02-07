@@ -102,39 +102,56 @@ async def check_title_appearance_in_start_concurrent(structure, page_list, model
 
 
 def toc_detector_single_page(content, model=None):
-    prompt = f"""
-    Your job is to detect if there is a table of content provided in the given text.
+    prompt = f"""You are a document analyzer. Your task is to detect if the given text contains a table of contents (TOC).
 
-    Given text: {content}
+Text to analyze:
+{content}
 
-    return the following JSON format:
-    {{
-        "thinking": <why do you think there is a table of content in the given text>
-        "toc_detected": "<yes or no>",
-    }}
+IMPORTANT NOTES:
+- Abstract, summary, notation list, figure list, table list, bibliography, index are NOT table of contents
+- A table of contents typically contains chapter/section titles with page numbers
+- Look for phrases like "Contents", "Table of Contents", "Chapters", "Sections"
 
-    Directly return the final JSON structure. Do not output anything else.
-    Please note: abstract,summary, notation list, figure list, table list, etc. are not table of contents."""
+Return ONLY a valid JSON object in this exact format (no markdown, no explanations):
+```json
+{{
+    "thinking": "Brief explanation of your analysis",
+    "toc_detected": "yes" or "no"
+}}
+```
+
+Example response:
+```json
+{{
+    "thinking": "The text shows a list of chapters with page numbers",
+    "toc_detected": "yes"
+}}
+```
+
+Remember: Return ONLY the JSON, nothing else."""
 
     response = ChatGPT_API(model=model, prompt=prompt)
     # print('response', response)
-    json_content = extract_json(response)    
+    json_content = extract_json(response)
     return json_content['toc_detected']
 
 
 def check_if_toc_extraction_is_complete(content, toc, model=None):
-    prompt = f"""
-    You are given a partial document  and a  table of contents.
-    Your job is to check if the  table of contents is complete, which it contains all the main sections in the partial document.
+    prompt = f"""You are given a partial document and a table of contents. Your job is to check if the table of contents is complete (contains all main sections).
 
-    Reply format:
-    {{
-        "thinking": <why do you think the table of contents is complete or not>
-        "completed": "yes" or "no"
-    }}
-    Directly return the final JSON structure. Do not output anything else."""
+Document:\n{content}\n
+Table of contents:\n{toc}
 
-    prompt = prompt + '\n Document:\n' + content + '\n Table of contents:\n' + toc
+Return ONLY a valid JSON object:
+```json
+{{
+    "thinking": "Brief explanation",
+    "completed": "yes" or "no"
+}}
+```
+
+Remember: Return ONLY the JSON, nothing else."""
+
     response = ChatGPT_API(model=model, prompt=prompt)
     json_content = extract_json(response)
     return json_content['completed']
@@ -496,7 +513,7 @@ def remove_first_physical_index_section(text):
     return text
 
 ### add verify completeness
-def generate_toc_continue(toc_content, part, model="gpt-4o-2024-11-20"):
+def generate_toc_continue(toc_content, part, model="glm-4.7"):
     print('start generate_toc_continue')
     prompt = """
     You are an expert in extracting hierarchical tree structure.
@@ -540,18 +557,18 @@ def generate_toc_init(part, model=None):
 
     For the title, you need to extract the original title from the text, only fix the space inconsistency.
 
-    The provided text contains tags like <physical_index_X> and <physical_index_X> to indicate the start and end of page X. 
+    The provided text contains tags like <physical_index_X> and <physical_index_X> to indicate the start and end of page X.
 
     For the physical_index, you need to extract the physical index of the start of the section from the text. Keep the <physical_index_X> format.
 
-    The response should be in the following format. 
+    The response should be in the following format:
         [
             {{
                 "structure": <structure index, "x.x.x"> (string),
                 "title": <title of the section, keep the original title>,
                 "physical_index": "<physical_index_X> (keep the format)"
             }},
-            
+
         ],
 
 
@@ -561,9 +578,52 @@ def generate_toc_init(part, model=None):
     response, finish_reason = ChatGPT_API_with_finish_reason(model=model, prompt=prompt)
 
     if finish_reason == 'finished':
-         return extract_json(response)
+        return extract_json(response)
+
+    # Handle max_output_reached by continuing the conversation
+    chat_history = [
+        {"role": "user", "content": prompt},
+        {"role": "assistant", "content": response},
+    ]
+
+    # Continue generating until finished or max retries
+    max_retries = 5
+    retry_count = 0
+    while finish_reason == 'max_output_reached' and retry_count < max_retries:
+        print(f'Continuing generation (attempt {retry_count + 1}/{max_retries})...')
+        continue_prompt = "Please continue generating the JSON structure from where you left off. Return ONLY the remaining JSON array items."
+        new_response, finish_reason = ChatGPT_API_with_finish_reason(
+            model=model,
+            prompt=continue_prompt,
+            chat_history=chat_history
+        )
+
+        # Append new response
+        response = response.rstrip()
+        if response.endswith(']'):
+            response = response[:-1]  # Remove closing bracket to continue
+        if not response.endswith(','):
+            response += ','
+        if new_response.startswith('['):
+            new_response = new_response[1:]  # Remove opening bracket
+        response = response + new_response
+
+        chat_history = [
+            {"role": "user", "content": continue_prompt},
+            {"role": "assistant", "content": new_response},
+        ]
+        retry_count += 1
+
+    if finish_reason == 'finished':
+        return extract_json(response)
     else:
-        raise Exception(f'finish reason: {finish_reason}')
+        # Return what we have even if not perfectly finished
+        print(f'Warning: Generation ended with reason: {finish_reason}')
+        try:
+            return extract_json(response)
+        except:
+            print('Could not extract JSON, returning partial response')
+            return []
 
 def process_no_toc(page_list, start_index=1, model=None, logger=None):
     page_contents=[]
@@ -729,7 +789,7 @@ def check_toc(page_list, opt=None):
 
 
 ################### fix incorrect toc #########################################################
-def single_toc_item_index_fixer(section_title, content, model="gpt-4o-2024-11-20"):
+def single_toc_item_index_fixer(section_title, content, model="glm-4.7"):
     tob_extractor_prompt = """
     You are given a section title and several pages of a document, your job is to find the physical index of the start page of the section in the partial document.
 

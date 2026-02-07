@@ -10,7 +10,8 @@ if __name__ == "__main__":
     parser.add_argument('--pdf_path', type=str, help='Path to the PDF file')
     parser.add_argument('--md_path', type=str, help='Path to the Markdown file')
 
-    parser.add_argument('--model', type=str, default='gpt-4o-2024-11-20', help='Model to use')
+    parser.add_argument('--model', type=str, default='glm-4.7', help='Model to use')
+    parser.add_argument('--base-url', type=str, default=None, help='Base URL for OpenAI API (e.g., https://api.z.ai/api/coding/paas/v4)')
 
     parser.add_argument('--toc-check-pages', type=int, default=20, 
                       help='Number of pages to check for table of contents (PDF only)')

@@ -2,6 +2,7 @@ import tiktoken
 import openai
 import logging
 import os
+import re
 from datetime import datetime
 import time
 import json
@@ -18,17 +19,31 @@ from pathlib import Path
 from types import SimpleNamespace as config
 
 CHATGPT_API_KEY = os.getenv("CHATGPT_API_KEY")
+OPENAI_BASE_URL = os.getenv("OPENAI_BASE_URL")
 
 def count_tokens(text, model=None):
     if not text:
         return 0
-    enc = tiktoken.encoding_for_model(model)
-    tokens = enc.encode(text)
-    return len(tokens)
+    try:
+        # Try to get encoding for the model (works for OpenAI models)
+        enc = tiktoken.encoding_for_model(model)
+        tokens = enc.encode(text)
+        return len(tokens)
+    except (KeyError, AttributeError):
+        # Fallback for non-OpenAI models (like GLM)
+        # Use cl100k_base (GPT-4) encoding as a reasonable approximation
+        # Or estimate tokens: ~4 characters per token for English text
+        try:
+            enc = tiktoken.get_encoding("cl100k_base")
+            tokens = enc.encode(text)
+            return len(tokens)
+        except:
+            # Last resort: estimate (rough approximation)
+            return len(text) // 4
 
-def ChatGPT_API_with_finish_reason(model, prompt, api_key=CHATGPT_API_KEY, chat_history=None):
+def ChatGPT_API_with_finish_reason(model, prompt, api_key=CHATGPT_API_KEY, base_url=OPENAI_BASE_URL, chat_history=None):
     max_retries = 10
-    client = openai.OpenAI(api_key=api_key)
+    client = openai.OpenAI(api_key=api_key, base_url=base_url)
     for i in range(max_retries):
         try:
             if chat_history:
@@ -58,9 +73,9 @@ def ChatGPT_API_with_finish_reason(model, prompt, api_key=CHATGPT_API_KEY, chat_
 
 
 
-def ChatGPT_API(model, prompt, api_key=CHATGPT_API_KEY, chat_history=None):
+def ChatGPT_API(model, prompt, api_key=CHATGPT_API_KEY, base_url=OPENAI_BASE_URL, chat_history=None):
     max_retries = 10
-    client = openai.OpenAI(api_key=api_key)
+    client = openai.OpenAI(api_key=api_key, base_url=base_url)
     for i in range(max_retries):
         try:
             if chat_history:
@@ -86,12 +101,12 @@ def ChatGPT_API(model, prompt, api_key=CHATGPT_API_KEY, chat_history=None):
                 return "Error"
             
 
-async def ChatGPT_API_async(model, prompt, api_key=CHATGPT_API_KEY):
+async def ChatGPT_API_async(model, prompt, api_key=CHATGPT_API_KEY, base_url=OPENAI_BASE_URL):
     max_retries = 10
     messages = [{"role": "user", "content": prompt}]
     for i in range(max_retries):
         try:
-            async with openai.AsyncOpenAI(api_key=api_key) as client:
+            async with openai.AsyncOpenAI(api_key=api_key, base_url=base_url) as client:
                 response = await client.chat.completions.create(
                     model=model,
                     messages=messages,
@@ -410,8 +425,15 @@ def add_preface_if_needed(data):
 
 
 
-def get_page_tokens(pdf_path, model="gpt-4o-2024-11-20", pdf_parser="PyPDF2"):
-    enc = tiktoken.encoding_for_model(model)
+def get_page_tokens(pdf_path, model="glm-4.7", pdf_parser="PyMuPDF"):
+    # Get token encoding with fallback for non-OpenAI models
+    try:
+        enc = tiktoken.encoding_for_model(model)
+    except (KeyError, AttributeError):
+        # Fallback for non-OpenAI models (like GLM)
+        # Use cl100k_base (GPT-4) encoding as a reasonable approximation
+        enc = tiktoken.get_encoding("cl100k_base")
+
     if pdf_parser == "PyPDF2":
         pdf_reader = PyPDF2.PdfReader(pdf_path)
         page_list = []
@@ -533,7 +555,7 @@ def remove_structure_text(data):
 def check_token_limit(structure, limit=110000):
     list = structure_to_list(structure)
     for node in list:
-        num_tokens = count_tokens(node['text'], model='gpt-4o')
+        num_tokens = count_tokens(node['text'], model='glm-4.7')
         if num_tokens > limit:
             print(f"Node ID: {node['node_id']} has {num_tokens} tokens")
             print("Start Index:", node['start_index'])
