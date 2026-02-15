@@ -306,7 +306,7 @@ if __name__ == "__main__":
     MD_PATH = os.path.join(os.path.dirname(__file__), '..', 'tests/markdowns/', f'{MD_NAME}.md')
 
 
-    MODEL="glm-4.7"
+    MODEL="glm-5"
     IF_THINNING=False
     THINNING_THRESHOLD=5000
     SUMMARY_TOKEN_THRESHOLD=200

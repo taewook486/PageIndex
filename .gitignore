@@ -1,148 +1,197 @@
-.ipynb_checkpoints
-__pycache__
-files
-index
-temp/*
-chroma-collections.parquet
-chroma-embeddings.parquet
-.DS_Store
-.env*
-notebook
-SDK/*
-log/*
-logs/
-parts/*
-json_results/*
-
-.claude/local/
-out/
-*.dbm
-# Build Artifacts & Distribution
-.pytest_cache/
-.nuxt/
-*.db
-# Updated: 2026-01-10
-coverage.json
-# Skill-specific credentials
-Thumbs.db
-.claude/settings.local.*.json
-ehthumbs.db
-*.pyo
-.claude/skills/*/*/*key*
-.venv/
-*.tsbuildinfo
-# Secrets and Credentials (CRITICAL)
-.env.*
-.claude/skills/*/*/*secret*
-.aws/config
-.uv-cache/
-.fseventsd
-secret-*.*
-# Python Cache & Bytecode
-# Version: 0.33.0
+# ============================================
 # MoAI-ADK Package Distribution .gitignore
-.AppleDouble
-.vscode/
-*.sublime-project
-*_secret=*
-# Private keys (specific patterns to avoid false positives)
-*.pyc
-*.secret.*
-# IDE & Editors
-*.log
-*_secret.*
-*.pem
-.cursor/
-.claude/.env.local*
-*.sqlite
-.claude/settings.local.json
-*.sw?
-.DocumentRevisions-V100
-.LSOverride
-*-secret.*
-.claude/skills/*/.env*
-.#*
-*.backup
-*.njsproj
-.claude/skills/*/secrets/
-htmlcov/
-# Build Tools & Frameworks
-*.sublime-workspace
-.firebase/
-build/
-*.backup/
-.uv_cache/
-.Trashes
-.mypy_cache/
-*.sqlite3
-.VolumeIcon.icns
-# Credential patterns in environment files
-*.tmp
-# Certificate files
-*.egg-info/
-*-key.*
+# ============================================
+# Version: 0.33.0
+# Updated: 2026-01-10
 # Purpose: Essential patterns for user projects
-.idea/
-.TemporaryItems
-*~
-api-key-*
-# Test Coverage
-# Linux
-*_backup_*/
-# Virtual Environments
-.env/
-.tscache/
-venv/
-*_key.*
-*.pyd
-# Logs & Temporary Files
-!.env.example
-# Node.js (for docs/Nextra)
-.moai-backups/
+# ============================================
+
 # ===========================================
-*.p12
-.claude/skills/*/*/*token*
-.vercel/
-*_token=*
-.directory
-*.key.*
-env/
-# Deployment & CI/CD
-*.temp
-# Environment files
-.claude/plans/
+# Go Build Artifacts
+# ===========================================
+bin/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+cover.out
+cover.html
+cpu.prof
+mem.prof
+
+# ===========================================
+# Build Artifacts & Distribution
+# ===========================================
+build/
 dist/
-secret-key-*
-# OS Files
-.aws/credentials
-*.swo
+*.egg-info/
 *.egg
-*-secret-key.*
-node_modules/
+
+# ===========================================
+# Python Cache & Bytecode
+# ===========================================
+__pycache__/
+.pytest_cache/
+*.pyc
+*.pyo
+*.pyd
+.mypy_cache/
+.ruff_cache/
+*.db
+*.sqlite
+*.sqlite3
+*.rdb
+*.dbm
+
+# ===========================================
+# Virtual Environments
+# ===========================================
+venv/
+.venv/
+env/
+.env/
+.uv_cache/
+.uv-cache/
+
+# ===========================================
+# Test Coverage
+# ===========================================
+.coverage
+coverage.json
+htmlcov/
+
+# ===========================================
+# IDE & Editors
+# ===========================================
+.vscode/
+.idea/
+*.swp
+*.swo
+*.sw?
+*~
+.cursor/
+*.sublime-project
+*.sublime-workspace
+*.njsproj
 *.sln
 *.suo
-*.rdb
-private-key*
-*.bak
-# Claude Code Configuration
-[Dd]esktop.ini
-.ruff_cache/
-.turbo/
-*.jks
-.coverage
-*-api-key.*
-*.swp
-dist-ssr/
-# ============================================
-*.pfx
-# Backups
-# Windows
-.Spotlight-V100
-.netlify/
-.env
-# FIXED: Issue #237 - Replaced overly broad *key* and *secret* patterns
+.#*
+
+# ===========================================
+# OS Files
+# ===========================================
 # Mac
-.next/
-__pycache__/
+.DS_Store
+.AppleDouble
+.LSOverride
+.DocumentRevisions-V100
+.fseventsd
+.Spotlight-V100
+.TemporaryItems
+.Trashes
+.VolumeIcon.icns
+
+# Windows
+[Dd]esktop.ini
+Thumbs.db
+ehthumbs.db
+
+# Linux
+.directory
+
+# ===========================================
+# Logs & Temporary Files
+# ===========================================
+*.log
+logs/
+*.tmp
+*.temp
+*.bak
+*.backup
+
+# ===========================================
+# Backups
+# ===========================================
+.moai-backups/
+*.backup/
 *-backup/
+*_backup_*/
+
+# ===========================================
+# Secrets and Credentials (CRITICAL)
+# ===========================================
+# Environment files
+.env
+.env.*
+!.env.example
+
+# Certificate files
+*.pem
+*.p12
+*.pfx
+*.jks
+
+# Private keys (specific patterns to avoid false positives)
+# FIXED: Issue #237 - Replaced overly broad *key* and *secret* patterns
+*-key.*
+*_key.*
+*.key.*
+*-secret-key.*
+*-api-key.*
+api-key-*
+secret-key-*
+private-key*
+*-secret.*
+*_secret.*
+*.secret.*
+secret-*.*
+
+# Credential patterns in environment files
+*_secret=*
+*_token=*
+
 # Cloud provider credentials
+.aws/config
+.aws/credentials
+
+# ===========================================
+# Claude Code Configuration
+# ===========================================
+.claude/settings.local.json
+.claude/settings.local.*.json
+.claude/.env.local*
+.claude/local/
+.claude/plans/
+
+# Skill-specific credentials
+.claude/skills/*/.env*
+.claude/skills/*/secrets/
+.claude/skills/*/*/*secret*
+.claude/skills/*/*/*key*
+.claude/skills/*/*/*token*
+# Re-include legitimate skill module files containing "token" in their name
+!.claude/skills/*/modules/*token*.md
+
+# ===========================================
+# Node.js (for docs/Nextra)
+# ===========================================
+node_modules/
+*.tsbuildinfo
+.tscache/
+.next/
+out/
+
+# ===========================================
+# Build Tools & Frameworks
+# ===========================================
+.turbo/
+.nuxt/
+dist-ssr/
+
+# ===========================================
+# Deployment & CI/CD
+# ===========================================
+.vercel/
+.netlify/
+.firebase/
