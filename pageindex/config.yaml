@@ -1,4 +1,4 @@
-model: "glm-4.7"
+model: "glm-5"
 base_url: "https://api.z.ai/api/coding/paas/v4"
 toc_check_page_num: 20
 max_page_num_each_node: 10

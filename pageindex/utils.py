@@ -1,29 +1,147 @@
-import tiktoken
-import openai
+"""
+Utility functions for PageIndex.
+
+This module provides utility functions for:
+- Token counting
+- OpenAI API interaction
+- JSON parsing and extraction
+- PDF processing
+- Tree structure manipulation
+- Configuration management
+- Logging
+"""
+
+import copy
+import json
 import logging
 import os
 import re
-from datetime import datetime
 import time
-import json
-import PyPDF2
-import copy
 import asyncio
-import pymupdf
+from datetime import datetime
 from io import BytesIO
-from dotenv import load_dotenv
-load_dotenv()
-import logging
-import yaml
 from pathlib import Path
+from typing import Optional, Dict, List, Any, Tuple, Union
+from .constants import (
+    EnvKeys,
+    ApiPatterns,
+    Defaults,
+    Paths,
+    JsonFields,
+    ErrorMessages,
+)
+
+import openai
+import pymupdf
+import PyPDF2
+import tiktoken
+import yaml
+from dotenv import load_dotenv
 from types import SimpleNamespace as config
 
-CHATGPT_API_KEY = os.getenv("CHATGPT_API_KEY")
-OPENAI_BASE_URL = os.getenv("OPENAI_BASE_URL")
+load_dotenv()
 
-def count_tokens(text, model=None):
-    if not text:
+
+# =============================================================================
+# Global Variables (with validation)
+# =============================================================================
+def _get_env_var(key: str, default: Optional[str] = None) -> str:
+    """Get environment variable with optional default.
+
+    Args:
+        key: Environment variable name
+        default: Default value if not set
+
+    Returns:
+        Environment variable value or default
+
+    Raises:
+        ValueError: If the variable is required and not set
+    """
+    value = os.getenv(key, default)
+    if not value:
+        if default is None:
+            raise ValueError(f"Required environment variable '{key}' is not set")
+        return default
+    return value
+
+
+CHATGPT_API_KEY: str = _get_env_var(EnvKeys.CHATGPT_API_KEY)
+OPENAI_BASE_URL: Optional[str] = _get_env_var(EnvKeys.OPENAI_BASE_URL, None)
+
+
+# =============================================================================
+# Rate Limiting
+# =============================================================================
+class RateLimiter:
+    """Rate limiter for controlling concurrent API requests."""
+
+    def __init__(self, max_concurrent: int = Defaults.MAX_CONCURRENT_REQUESTS, delay: float = Defaults.RATE_LIMIT_DELAY):
+        """Initialize rate limiter.
+
+        Args:
+            max_concurrent: Maximum number of concurrent requests
+            delay: Delay between requests in seconds
+        """
+        self._semaphore = asyncio.Semaphore(max_concurrent)
+        self._delay = delay
+
+    async def __aenter__(self):
+        """Acquire semaphore."""
+        await self._semaphore.acquire()
+        # Add small delay to prevent overwhelming the API
+        await asyncio.sleep(self._delay)
+        return self
+
+    async def __aexit__(self, exc_type, exc_val, exc_tb):  # noqa: ARG002
+        """Release semaphore.
+
+        Args:
+            exc_type: Exception type (unused)
+            exc_val: Exception value (unused)
+            exc_tb: Exception traceback (unused)
+        """
+        self._semaphore.release()
+
+
+# Global rate limiter instance
+_api_rate_limiter: Optional[RateLimiter] = None
+
+
+def get_api_rate_limiter() -> RateLimiter:
+    """Get or create the global API rate limiter.
+
+    Returns:
+        Global RateLimiter instance
+    """
+    global _api_rate_limiter
+    if _api_rate_limiter is None:
+        _api_rate_limiter = RateLimiter()
+    return _api_rate_limiter
+
+
+# =============================================================================
+# Token Counting
+# =============================================================================
+def count_tokens(text: str, model: Optional[str] = None) -> int:
+    """Count the number of tokens in a text string.
+
+    Args:
+        text: Input text to count tokens for
+        model: Model name for encoding selection (uses cl100k_base if not recognized)
+
+    Returns:
+        Number of tokens in the text
+
+    Examples:
+        >>> count_tokens("Hello world")
+        2
+        >>> count_tokens("This is a longer text.", model="gpt-4")
+        6
+    """
+    if not text or text.isspace():
         return 0
+
     try:
         # Try to get encoding for the model (works for OpenAI models)
         enc = tiktoken.encoding_for_model(model)
@@ -32,95 +150,212 @@ def count_tokens(text, model=None):
     except (KeyError, AttributeError):
         # Fallback for non-OpenAI models (like GLM)
         # Use cl100k_base (GPT-4) encoding as a reasonable approximation
-        # Or estimate tokens: ~4 characters per token for English text
         try:
             enc = tiktoken.get_encoding("cl100k_base")
             tokens = enc.encode(text)
             return len(tokens)
-        except:
+        except Exception as e:
             # Last resort: estimate (rough approximation)
+            logging.warning(f"Token counting failed, using estimation: {e}")
             return len(text) // 4
 
-def ChatGPT_API_with_finish_reason(model, prompt, api_key=CHATGPT_API_KEY, base_url=OPENAI_BASE_URL, chat_history=None):
-    max_retries = 10
+def ChatGPT_API_with_finish_reason(
+    model: str,
+    prompt: str,
+    api_key: str = CHATGPT_API_KEY,
+    base_url: Optional[str] = OPENAI_BASE_URL,
+    chat_history: Optional[List[Dict[str, str]]] = None,
+) -> Tuple[str, str]:
+    """Call OpenAI API and return response with finish reason.
+
+    Args:
+        model: Model name to use
+        prompt: User prompt
+        api_key: OpenAI API key
+        base_url: Base URL for API (uses default if None)
+        chat_history: Previous chat history for context
+
+    Returns:
+        Tuple of (response_content, finish_reason)
+        finish_reason is "max_output_reached" or "finished"
+
+    Raises:
+        Exception: If max retries exceeded
+    """
+    max_retries = Defaults.MAX_RETRIES
     client = openai.OpenAI(api_key=api_key, base_url=base_url)
+
     for i in range(max_retries):
         try:
             if chat_history:
-                messages = chat_history
+                messages = chat_history.copy()
                 messages.append({"role": "user", "content": prompt})
             else:
                 messages = [{"role": "user", "content": prompt}]
-            
+
             response = client.chat.completions.create(
                 model=model,
                 messages=messages,
-                temperature=0,
+                temperature=Defaults.TEMPERATURE,
             )
-            if response.choices[0].finish_reason == "length":
+            finish_reason = response.choices[0].finish_reason
+
+            if finish_reason == "length":
                 return response.choices[0].message.content, "max_output_reached"
             else:
                 return response.choices[0].message.content, "finished"
 
-        except Exception as e:
-            print('************* Retrying *************')
-            logging.error(f"Error: {e}")
+        except openai.APIError as e:
+            logging.error(f"OpenAI API error: {e}")
             if i < max_retries - 1:
-                time.sleep(1)  # Wait for 1秒 before retrying
+                time.sleep(Defaults.RETRY_DELAY)
             else:
-                logging.error('Max retries reached for prompt: ' + prompt)
-                return "Error"
+                logging.error(f"{ErrorMessages.MAX_RETRIES_REACHED} for prompt: {prompt[:100]}...")
+                raise
+        except Exception as e:
+            logging.error(f"Unexpected error: {e}")
+            if i < max_retries - 1:
+                time.sleep(Defaults.RETRY_DELAY)
+            else:
+                logging.error(f"{ErrorMessages.MAX_RETRIES_REACHED} for prompt: {prompt[:100]}...")
+                raise
+
+    # This should never be reached, but satisfies type checker
+    return "Error", "failed"
 
 
 
-def ChatGPT_API(model, prompt, api_key=CHATGPT_API_KEY, base_url=OPENAI_BASE_URL, chat_history=None):
-    max_retries = 10
+def ChatGPT_API(
+    model: str,
+    prompt: str,
+    api_key: str = CHATGPT_API_KEY,
+    base_url: Optional[str] = OPENAI_BASE_URL,
+    chat_history: Optional[List[Dict[str, str]]] = None,
+) -> str:
+    """Call OpenAI API and return response content.
+
+    Args:
+        model: Model name to use
+        prompt: User prompt
+        api_key: OpenAI API key
+        base_url: Base URL for API (uses default if None)
+        chat_history: Previous chat history for context
+
+    Returns:
+        Response content as string
+
+    Raises:
+        Exception: If max retries exceeded
+    """
+    max_retries = Defaults.MAX_RETRIES
     client = openai.OpenAI(api_key=api_key, base_url=base_url)
+
     for i in range(max_retries):
         try:
             if chat_history:
-                messages = chat_history
+                messages = chat_history.copy()
                 messages.append({"role": "user", "content": prompt})
             else:
                 messages = [{"role": "user", "content": prompt}]
-            
+
             response = client.chat.completions.create(
                 model=model,
                 messages=messages,
-                temperature=0,
+                temperature=Defaults.TEMPERATURE,
             )
-   
+
             return response.choices[0].message.content
-        except Exception as e:
-            print('************* Retrying *************')
-            logging.error(f"Error: {e}")
+
+        except openai.RateLimitError as e:
+            # Use exponential backoff for rate limit errors
+            delay = Defaults.RETRY_DELAY * (2 ** i)
+            logging.warning(f"Rate limit hit, retrying in {delay}s... (attempt {i + 1}/{max_retries})")
             if i < max_retries - 1:
-                time.sleep(1)  # Wait for 1秒 before retrying
+                time.sleep(min(delay, 10))  # Cap at 10 seconds
             else:
-                logging.error('Max retries reached for prompt: ' + prompt)
-                return "Error"
+                logging.error(f"{ErrorMessages.MAX_RETRIES_REACHED} for prompt: {prompt[:100]}...")
+                raise
+        except openai.APIError as e:
+            logging.error(f"OpenAI API error: {e}")
+            if i < max_retries - 1:
+                time.sleep(Defaults.RETRY_DELAY)
+            else:
+                logging.error(f"{ErrorMessages.MAX_RETRIES_REACHED} for prompt: {prompt[:100]}...")
+                raise
+        except Exception as e:
+            logging.error(f"Unexpected error: {e}")
+            if i < max_retries - 1:
+                time.sleep(Defaults.RETRY_DELAY)
+            else:
+                logging.error(f"{ErrorMessages.MAX_RETRIES_REACHED} for prompt: {prompt[:100]}...")
+                raise
+
+    # This should never be reached, but satisfies type checker
+    return "Error"
             
 
-async def ChatGPT_API_async(model, prompt, api_key=CHATGPT_API_KEY, base_url=OPENAI_BASE_URL):
-    max_retries = 10
+async def ChatGPT_API_async(
+    model: str,
+    prompt: str,
+    api_key: str = CHATGPT_API_KEY,
+    base_url: Optional[str] = OPENAI_BASE_URL,
+) -> str:
+    """Call OpenAI API asynchronously and return response content.
+
+    Args:
+        model: Model name to use
+        prompt: User prompt
+        api_key: OpenAI API key
+        base_url: Base URL for API (uses default if None)
+
+    Returns:
+        Response content as string
+
+    Raises:
+        Exception: If max retries exceeded
+    """
+    max_retries = Defaults.MAX_RETRIES
     messages = [{"role": "user", "content": prompt}]
+    rate_limiter = get_api_rate_limiter()
+
     for i in range(max_retries):
         try:
-            async with openai.AsyncOpenAI(api_key=api_key, base_url=base_url) as client:
-                response = await client.chat.completions.create(
-                    model=model,
-                    messages=messages,
-                    temperature=0,
-                )
-                return response.choices[0].message.content
-        except Exception as e:
-            print('************* Retrying *************')
-            logging.error(f"Error: {e}")
+            # Use rate limiter to control concurrent requests
+            async with rate_limiter:
+                async with openai.AsyncOpenAI(api_key=api_key, base_url=base_url) as client:
+                    response = await client.chat.completions.create(
+                        model=model,
+                        messages=messages,
+                        temperature=Defaults.TEMPERATURE,
+                    )
+                    return response.choices[0].message.content
+
+        except openai.RateLimitError as e:
+            # Use exponential backoff for rate limit errors
+            delay = Defaults.RETRY_DELAY * (2 ** i)
+            logging.warning(f"Rate limit hit, retrying in {delay}s... (attempt {i + 1}/{max_retries})")
             if i < max_retries - 1:
-                await asyncio.sleep(1)  # Wait for 1s before retrying
+                await asyncio.sleep(min(delay, 10))  # Cap at 10 seconds
             else:
-                logging.error('Max retries reached for prompt: ' + prompt)
-                return "Error"  
+                logging.error(f"{ErrorMessages.MAX_RETRIES_REACHED} for prompt: {prompt[:100]}...")
+                raise
+        except openai.APIError as e:
+            logging.error(f"OpenAI API error: {e}")
+            if i < max_retries - 1:
+                await asyncio.sleep(Defaults.RETRY_DELAY)
+            else:
+                logging.error(f"{ErrorMessages.MAX_RETRIES_REACHED} for prompt: {prompt[:100]}...")
+                raise
+        except Exception as e:
+            logging.error(f"Unexpected error: {e}")
+            if i < max_retries - 1:
+                await asyncio.sleep(Defaults.RETRY_DELAY)
+            else:
+                logging.error(f"{ErrorMessages.MAX_RETRIES_REACHED} for prompt: {prompt[:100]}...")
+                raise
+
+    # This should never be reached, but satisfies type checker
+    return "Error"  
             
             
 def get_json_content(response):
@@ -137,13 +372,34 @@ def get_json_content(response):
     return json_content
          
 
-def extract_json(content):
+def extract_json(content: str) -> Dict[str, Any]:
+    """Extract JSON from LLM response content.
+
+    Handles various formats including:
+    - JSON code blocks (```json ... ```)
+    - Plain JSON
+    - Python None vs JSON null
+    - Trailing commas
+    - Whitespace normalization
+
+    Args:
+        content: Raw content from LLM response
+
+    Returns:
+        Parsed JSON as dictionary, or empty dict if parsing fails
+
+    Examples:
+        >>> extract_json('{"key": "value"}')
+        {'key': 'value'}
+        >>> extract_json('```json\\n{"key": "value"}\\n```')
+        {'key': 'value'}
+    """
     try:
         # First, try to extract JSON enclosed within ```json and ```
-        start_idx = content.find("```json")
+        start_idx = content.find(ApiPatterns.JSON_CODE_BLOCK_START)
         if start_idx != -1:
-            start_idx += 7  # Adjust index to start after the delimiter
-            end_idx = content.rfind("```")
+            start_idx += len(ApiPatterns.JSON_CODE_BLOCK_START)  # Skip ```json
+            end_idx = content.rfind(ApiPatterns.JSON_CODE_BLOCK_END)
             json_content = content[start_idx:end_idx].strip()
         else:
             # If no delimiters, assume entire content could be JSON
@@ -156,15 +412,16 @@ def extract_json(content):
 
         # Attempt to parse and return the JSON object
         return json.loads(json_content)
+
     except json.JSONDecodeError as e:
-        logging.error(f"Failed to extract JSON: {e}")
+        logging.warning(f"Failed to extract JSON: {e}")
         # Try to clean up the content further if initial parsing fails
         try:
             # Remove any trailing commas before closing brackets/braces
             json_content = json_content.replace(',]', ']').replace(',}', '}')
             return json.loads(json_content)
-        except:
-            logging.error("Failed to parse JSON even after cleanup")
+        except json.JSONDecodeError as e2:
+            logging.error(f"Failed to parse JSON even after cleanup: {e2}")
             return {}
     except Exception as e:
         logging.error(f"Unexpected error while extracting JSON: {e}")
@@ -425,7 +682,7 @@ def add_preface_if_needed(data):
 
 
 
-def get_page_tokens(pdf_path, model="glm-4.7", pdf_parser="PyMuPDF"):
+def get_page_tokens(pdf_path, model="glm-5", pdf_parser="PyMuPDF"):
     # Get token encoding with fallback for non-OpenAI models
     try:
         enc = tiktoken.encoding_for_model(model)
@@ -555,7 +812,7 @@ def remove_structure_text(data):
 def check_token_limit(structure, limit=110000):
     list = structure_to_list(structure)
     for node in list:
-        num_tokens = count_tokens(node['text'], model='glm-4.7')
+        num_tokens = count_tokens(node['text'], model='glm-5')
         if num_tokens > limit:
             print(f"Node ID: {node['node_id']} has {num_tokens} tokens")
             print("Start Index:", node['start_index'])
@@ -701,24 +958,82 @@ def format_structure(structure, order=None):
 
 
 class ConfigLoader:
-    def __init__(self, default_path: str = None):
+    """Load and manage PageIndex configuration from YAML files.
+
+    This class loads default configuration from config.yaml and merges
+    it with user-provided options.
+
+    Attributes:
+        _default_dict: Default configuration values from YAML file
+
+    Examples:
+        >>> loader = ConfigLoader()
+        >>> config = loader.load({'model': 'gpt-4'})
+        >>> config.model
+        'gpt-4'
+    """
+
+    def __init__(self, default_path: Optional[Union[str, Path]] = None):
+        """Initialize ConfigLoader with default configuration file.
+
+        Args:
+            default_path: Path to config.yaml file (uses default if None)
+        """
         if default_path is None:
             default_path = Path(__file__).parent / "config.yaml"
-        self._default_dict = self._load_yaml(default_path)
+        self._default_dict: Dict[str, Any] = self._load_yaml(default_path)
 
     @staticmethod
-    def _load_yaml(path):
-        with open(path, "r", encoding="utf-8") as f:
-            return yaml.safe_load(f) or {}
+    def _load_yaml(path: Union[str, Path]) -> Dict[str, Any]:
+        """Load YAML file and return as dictionary.
 
-    def _validate_keys(self, user_dict):
+        Args:
+            path: Path to YAML file
+
+        Returns:
+            Parsed YAML content as dictionary
+
+        Raises:
+            FileNotFoundError: If config file doesn't exist
+            yaml.YAMLError: If YAML parsing fails
+        """
+        path = Path(path)
+        if not path.exists():
+            logging.warning(f"Config file not found: {path}, using empty defaults")
+            return {}
+
+        with open(path, "r", encoding="utf-8") as f:
+            try:
+                return yaml.safe_load(f) or {}
+            except yaml.YAMLError as e:
+                logging.error(f"Failed to parse config file {path}: {e}")
+                return {}
+
+    def _validate_keys(self, user_dict: Dict[str, Any]) -> None:
+        """Validate that user config keys exist in default config.
+
+        Args:
+            user_dict: User-provided configuration dictionary
+
+        Raises:
+            ValueError: If unknown keys are provided
+        """
         unknown_keys = set(user_dict) - set(self._default_dict)
         if unknown_keys:
-            raise ValueError(f"Unknown config keys: {unknown_keys}")
+            raise ValueError(ErrorMessages.CONFIG_UNKNOWN_KEYS.format(unknown_keys))
 
-    def load(self, user_opt=None) -> config:
-        """
-        Load the configuration, merging user options with default values.
+    def load(self, user_opt: Optional[Union[Dict[str, Any], config]] = None) -> config:
+        """Load configuration, merging user options with defaults.
+
+        Args:
+            user_opt: User configuration options (dict, config, or None)
+
+        Returns:
+            SimpleNamespace object with merged configuration
+
+        Raises:
+            TypeError: If user_opt has invalid type
+            ValueError: If unknown config keys provided
         """
         if user_opt is None:
             user_dict = {}
