@@ -157,9 +157,35 @@ CHATGPT_API_KEY=your_openai_key_here
 
 ### 3. Run PageIndex on your PDF
 
+You can use PageIndex in two ways:
+
+#### Option A: Command Line Interface (CLI)
+
 ```bash
 python3 run_pageindex.py --pdf_path /path/to/your/document.pdf
 ```
+
+#### Option B: Graphical User Interface (GUI) 🆕
+
+For users who prefer a graphical interface, PageIndex now includes a modern GUI built with CustomTkinter:
+
+```bash
+python3 run_pageindex_gui.py
+```
+
+**GUI Features:**
+- 📄 Drag & drop file selection for PDF and Markdown files
+- ⚙️ Visual configuration panel with all CLI parameters
+- 📊 Real-time progress display during processing
+- 🌳 Tree structure preview of results
+- 💾 Automatic result saving to `./results/` directory
+- 🌙 Dark mode support
+
+**GUI Requirements:**
+- Python 3.10+
+- CustomTkinter (automatically installed with requirements.txt)
+
+The GUI provides the same functionality as the CLI but with a user-friendly interface. Perfect for users who are not comfortable with command-line tools.
 
 <details>
 <summary><strong>Optional parameters</strong></summary>

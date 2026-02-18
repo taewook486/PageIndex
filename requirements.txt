@@ -1,4 +1,9 @@
 # Production dependencies
+# GUI Dependencies
+customtkinter>=5.2.0
+darkdetect>=0.8.0
+
+# Core Dependencies
 openai>=1.100.0,<2.0.0
 pymupdf>=1.26.0,<2.0.0
 PyPDF2>=3.0.0,<4.0.0
