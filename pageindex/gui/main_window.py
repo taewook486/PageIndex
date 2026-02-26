@@ -6,6 +6,7 @@ This module provides the main application window for the PageIndex GUI.
 
 import os
 import json
+import time
 import tkinter as tk
 from tkinter import filedialog
 import customtkinter as ctk
@@ -13,6 +14,8 @@ from typing import Optional, Dict, Any
 from pathlib import Path
 from .processing import ProcessingCallbacks, BackgroundProcessor, save_result_to_file
 from .json_viewer import JsonViewerTabView
+from .managers import HistoryManager, SettingsManager
+from .dialogs import SettingsDialog, HistoryDialog
 
 
 class PageIndexMainWindow(ctk.CTk):
@@ -29,16 +32,24 @@ class PageIndexMainWindow(ctk.CTk):
         # Make window resizable
         self.minsize(800, 600)
 
+        # Initialize managers
+        self.history_manager = HistoryManager()
+        self.settings_manager = SettingsManager()
+
         # State variables
         self.selected_file: Optional[str] = None
         self.file_type: Optional[str] = None  # 'pdf' or 'markdown'
         self.is_processing: bool = False
         self.current_processor: Optional[BackgroundProcessor] = None
         self.processing_result: Optional[Dict[str, Any]] = None
+        self.processing_start_time: Optional[float] = None
 
         # Build UI
         self._create_menu()
         self._create_main_layout()
+
+        # Load settings into UI
+        self._load_settings_from_manager()
 
         # Center window on screen
         self._center_window()
@@ -52,21 +63,34 @@ class PageIndexMainWindow(ctk.CTk):
         # File menu
         file_menu = tk.Menu(menubar, tearoff=0)
         menubar.add_cascade(label="File", menu=file_menu)
-        file_menu.add_command(label="Open PDF...", command=self._open_pdf_file)
+        file_menu.add_command(label="Open PDF...", command=self._open_pdf_file, accelerator="Ctrl+O")
         file_menu.add_command(label="Open Markdown...", command=self._open_markdown_file)
+        file_menu.add_separator()
+
+        # Recent Files submenu
+        self.recent_menu = tk.Menu(file_menu, tearoff=0)
+        file_menu.add_cascade(label="Recent Files", menu=self.recent_menu)
+        self._update_recent_menu()
+
         file_menu.add_separator()
         file_menu.add_command(label="Exit", command=self.quit)
 
         # Settings menu
         settings_menu = tk.Menu(menubar, tearoff=0)
         menubar.add_cascade(label="Settings", menu=settings_menu)
-        settings_menu.add_command(label="Preferences...", command=self._open_settings)
+        settings_menu.add_command(label="Preferences...", command=self._open_settings, accelerator="Ctrl+,")
         settings_menu.add_command(label="API Key...", command=self._open_api_key_settings)
 
         # Help menu
         help_menu = tk.Menu(menubar, tearoff=0)
         menubar.add_cascade(label="Help", menu=help_menu)
-        help_menu.add_command(label="About", command=self._show_about)
+        help_menu.add_command(label="About", command=self._show_about, accelerator="F1")
+
+        # Keyboard shortcuts
+        self.bind("<Control-o>", lambda e: self._open_pdf_file())
+        self.bind("<Control-O>", lambda e: self._open_pdf_file())
+        self.bind("<Control-comma>", lambda e: self._open_settings())
+        self.bind("<F1>", lambda e: self._show_about())
 
     def _create_main_layout(self):
         """Create the main application layout."""
@@ -412,6 +436,9 @@ class PageIndexMainWindow(ctk.CTk):
             self._show_error(str(e))
             return
 
+        # Record start time
+        self.processing_start_time = time.time()
+
         # Update UI state
         self.is_processing = True
         self.start_button.configure(state="disabled")
@@ -560,6 +587,11 @@ class PageIndexMainWindow(ctk.CTk):
         Args:
             result: Processing result dictionary
         """
+        # Calculate processing time
+        processing_time = 0.0
+        if self.processing_start_time is not None:
+            processing_time = time.time() - self.processing_start_time
+
         self.processing_result = result
         self.is_processing = False
         self.current_processor = None
@@ -581,10 +613,21 @@ class PageIndexMainWindow(ctk.CTk):
                     # Enable open results button
                     self.open_results_button.configure(state="normal")
 
-                    # Update status
-                    self.status_label.configure(
-                        text=f"✅ Complete! Results saved to {output_path}"
-                    )
+                    # Add to history
+                    if self.selected_file:
+                        self.history_manager.add_entry(
+                            path=self.selected_file,
+                            status="success",
+                            processing_time=processing_time,
+                            file_type=self.file_type or "pdf"
+                        )
+                        self._update_recent_menu()
+
+                    # Update status with processing time
+                    status_text = f"✅ Complete! Results saved to {output_path}"
+                    if processing_time > 0:
+                        status_text += f" ({processing_time:.1f}s)"
+                    self.status_label.configure(text=status_text)
 
                     # Update progress
                     self.progress_bar.set(1.0)
@@ -595,6 +638,16 @@ class PageIndexMainWindow(ctk.CTk):
                 self.start_button.configure(state="normal")
 
         else:
+            # Add failed attempt to history
+            if self.selected_file:
+                self.history_manager.add_entry(
+                    path=self.selected_file,
+                    status="error",
+                    processing_time=processing_time,
+                    file_type=self.file_type or "pdf"
+                )
+                self._update_recent_menu()
+
             self._show_error(f"Processing failed: {result.get('error', 'Unknown error')}")
             self.is_processing = False
             self.start_button.configure(state="normal")
@@ -701,11 +754,82 @@ class PageIndexMainWindow(ctk.CTk):
 
     def _open_settings(self):
         """Open settings dialog."""
-        self._show_info("Settings dialog will be implemented in the next phase.")
+        dialog = SettingsDialog(self, self.settings_manager)
+        self.wait_window(dialog)
+        # Reload settings after dialog closes
+        self._load_settings_from_manager()
 
     def _open_api_key_settings(self):
-        """Open API key settings dialog."""
-        self._show_info("API key settings will be implemented in the next phase.")
+        """Open API key settings dialog (alias for settings)."""
+        self._open_settings()
+
+    def _load_settings_from_manager(self):
+        """Load settings from SettingsManager into UI."""
+        settings = self.settings_manager.get_settings()
+
+        # Load PDF options
+        pdf_options = settings.get("pdf_options", {})
+        self.toc_check_pages_var.set(str(pdf_options.get("toc_check_pages", 20)))
+        self.max_pages_var.set(str(pdf_options.get("max_pages", 10)))
+        self.max_tokens_var.set(str(pdf_options.get("max_tokens", 20000)))
+
+        # Load output options
+        output_options = settings.get("output_options", {})
+        self.add_node_id_var.set(output_options.get("add_node_id", True))
+        self.add_node_summary_var.set(output_options.get("add_node_summary", True))
+        self.add_doc_description_var.set(output_options.get("add_doc_description", False))
+        self.add_node_text_var.set(output_options.get("add_node_text", False))
+
+    def _update_recent_menu(self):
+        """Update the recent files menu."""
+        # Clear existing items
+        self.recent_menu.delete(0, "end")
+
+        # Get recent files
+        recent_files = self.history_manager.get_recent_files()
+
+        if recent_files:
+            # Add file entries
+            for i, entry in enumerate(recent_files[:10]):  # Max 10 entries
+                import os
+                filename = os.path.basename(entry.path)
+                self.recent_menu.add_command(
+                    label=f"{i+1}. {filename}",
+                    command=lambda p=entry.path, ft=entry.file_type: self._load_file(p, ft)
+                )
+
+            # Add separator and clear option
+            self.recent_menu.add_separator()
+            self.recent_menu.add_command(
+                label="Clear History",
+                command=self._clear_history
+            )
+        else:
+            # No recent files
+            self.recent_menu.add_command(
+                label="No recent files",
+                state="disabled"
+            )
+
+    def _clear_history(self):
+        """Clear the recent files history."""
+        import tkinter.messagebox as messagebox
+
+        result = messagebox.askyesno(
+            "Clear History",
+            "Are you sure you want to clear all recent files history?"
+        )
+
+        if result:
+            self.history_manager.clear_history()
+            self._update_recent_menu()
+
+    def _open_history_dialog(self):
+        """Open the history dialog."""
+        dialog = HistoryDialog(self, self.history_manager, self._load_file)
+        self.wait_window(dialog)
+        # Update menu after dialog closes
+        self._update_recent_menu()
 
     def _show_about(self):
         """Show about dialog."""
