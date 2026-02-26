@@ -47,8 +47,8 @@ class Defaults:
     MAX_CONTINUE_RETRIES: Final[int] = 5
 
     # Rate Limiting
-    MAX_CONCURRENT_REQUESTS: Final[int] = 3  # Maximum concurrent API requests
-    RATE_LIMIT_DELAY: Final[float] = 0.5  # Delay between requests in seconds
+    MAX_CONCURRENT_REQUESTS: Final[int] = 20  # Maximum concurrent API requests (optimized for speed)
+    RATE_LIMIT_DELAY: Final[float] = 0.05  # Delay between requests in seconds (reduced for performance)
 
 
 # =============================================================================

@@ -1,7 +1,8 @@
 # PageIndex GUI 구현 - 변경 사항
 
 ## 날짜
-2026-02-19
+2026-02-26 (성능 최적화 업데이트)
+2026-02-19 (초기 구현)
 
 ## 개요
 PageIndex CLI 애플리케이션을 GUI 애플리케이션으로 변환
@@ -118,6 +119,26 @@ python run_pageindex_gui.py
 ```bash
 python run_pageindex.py --pdf_path document.pdf
 ```
+
+---
+
+## 2026-02-26 성능 최적화
+
+### 문제
+- PDF 처리 속도가 너무 느림
+- API 요청 병목 현상
+
+### 해결
+**Rate Limiting 설정 최적화** ([pageindex/constants.py](pageindex/constants.py#L50-L51))
+
+| 설정 | 이전 값 | 새 값 | 향상 |
+|------|---------|-------|------|
+| MAX_CONCURRENT_REQUESTS | 3 | 20 | 6.7x |
+| RATE_LIMIT_DELAY | 0.5초 | 0.05초 | 10x |
+
+### 예상 성능 향상
+- **100페이지 PDF 처리**: 최소 대기 시간 17초 → 0.25초
+- **종합 성능 향상**: 5-10배 빠른 처리 (API 서버 한도 내)
 
 ---
 
