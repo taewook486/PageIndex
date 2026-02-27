@@ -3,14 +3,23 @@ Background Processing Module for PageIndex GUI.
 
 This module handles file processing in background threads to keep
 the GUI responsive during long-running operations.
+
+@MX:SPEC: SPEC-GUI-003 - Enhanced with cancellation, progress tracking, and data integrity
 """
 
 import asyncio
-import threading
-import queue
-from typing import Callable, Optional, Dict, Any, Union
-from pathlib import Path
 import os
+import threading
+from pathlib import Path
+from typing import Any, Callable, Optional
+
+from .progress_calculator import ProgressCalculator
+from .progress_updater import ProgressUpdater
+from .status_formatter import StatusMessageFormatter
+
+# Import new utilities for SPEC-GUI-003
+from .stop_event_checker import CancellationException, StopEventChecker
+from .temp_file_manager import TempFileManager, atomic_write_json
 
 
 class ProcessingCallbacks:
@@ -19,7 +28,7 @@ class ProcessingCallbacks:
     def __init__(
         self,
         on_progress: Callable[[int, str], None],
-        on_complete: Callable[[Dict[str, Any]], None],
+        on_complete: Callable[[dict[str, Any]], None],
         on_error: Callable[[str], None]
     ):
         """Initialize callbacks.
@@ -35,13 +44,17 @@ class ProcessingCallbacks:
 
 
 class BackgroundProcessor(threading.Thread):
-    """Process files in background thread with event loop."""
+    """Process files in background thread with event loop.
+
+    @MX:NOTE: Enhanced with cancellation support, progress tracking,
+    and data integrity features per SPEC-GUI-003.
+    """
 
     def __init__(
         self,
         file_path: str,
         file_type: str,
-        config: Dict[str, Any],
+        config: dict[str, Any],
         callbacks: ProcessingCallbacks
     ):
         """Initialize background processor.
@@ -59,9 +72,22 @@ class BackgroundProcessor(threading.Thread):
         self.callbacks = callbacks
         self._stop_event = threading.Event()
 
+        # Initialize new utilities for SPEC-GUI-003
+        self._stop_checker = StopEventChecker(self._stop_event)
+        self._progress_calculator = ProgressCalculator()
+        self._progress_updater = ProgressUpdater(
+            callbacks.on_progress,
+            min_interval_ms=100
+        )
+        self._status_formatter = StatusMessageFormatter()
+        self._temp_manager: Optional[TempFileManager] = None
+
     def run(self):
         """Run the processing in background thread."""
         try:
+            # Initialize temp file manager for this run
+            self._temp_manager = TempFileManager()
+
             # Check if processing is synchronous or async
             if self.file_type == 'pdf':
                 # PDF processing is synchronous (uses asyncio.run() internally)
@@ -78,28 +104,78 @@ class BackgroundProcessor(threading.Thread):
             # Notify completion
             self.callbacks.on_complete(result)
 
+        except CancellationException:
+            # Handle cancellation gracefully
+            self._handle_cancellation()
         except Exception as e:
             # Notify error with full traceback for debugging
             import traceback
             error_details = f"{str(e)}\n\n{traceback.format_exc()}"
             self.callbacks.on_error(error_details)
+        finally:
+            # Clean up temp files if not committed
+            if self._temp_manager:
+                self._temp_manager.cleanup_on_cancel()
 
     def stop(self):
-        """Stop the processing."""
+        """Stop the processing.
+
+        @MX:NOTE: Sets the stop event which will be checked during processing.
+        """
         self._stop_event.set()
 
-    def _process_pdf_sync(self) -> Dict[str, Any]:
+    def _handle_cancellation(self):
+        """Handle graceful cancellation.
+
+        @MX:NOTE: Cleans up temp files and notifies UI of cancellation.
+        """
+        # Clean up any temp files
+        if self._temp_manager:
+            self._temp_manager.cleanup_on_cancel()
+
+        # Notify with cancellation message
+        cancel_msg = self._status_formatter.format_cancelled()
+        self._progress_updater.force_update(0, cancel_msg)
+
+        # Call error callback with cancellation info
+        self.callbacks.on_error("Processing cancelled by user")
+
+    def _check_stopped(self):
+        """Check if processing should stop.
+
+        @MX:NOTE: Raises CancellationException if stop requested.
+        """
+        self._stop_checker.check_if_stopped()
+
+    async def _check_stopped_async(self):
+        """Async version of _check_stopped."""
+        await self._stop_checker.check_if_stopped_async()
+
+    def _update_progress(self, percentage: int, message: str):
+        """Update progress with throttling."""
+        self._progress_updater.update(percentage, message)
+
+    def _force_progress_update(self, percentage: int, message: str):
+        """Force progress update bypassing throttling."""
+        self._progress_updater.force_update(percentage, message)
+
+    def _process_pdf_sync(self) -> dict[str, Any]:
         """Process PDF file synchronously.
 
         PDF processing uses asyncio.run() internally, so we can't
         call it from within an event loop. This method handles it
         synchronously.
 
+        @MX:NOTE: Enhanced with cancellation checkpoints and progress tracking.
+
         Returns:
             Dictionary with processing results
         """
-        from pageindex.page_index import page_index_main, config
+        from pageindex.page_index import page_index_main
         from pageindex.utils import ConfigLoader
+
+        # Check for cancellation at start
+        self._check_stopped()
 
         # Load configuration
         loader = ConfigLoader()
@@ -116,19 +192,35 @@ class BackgroundProcessor(threading.Thread):
 
         # Add base_url if provided
         if self.config.get('base_url'):
-            import os
             os.environ['OPENAI_BASE_URL'] = self.config['base_url']
 
         opt = loader.load(user_config)
 
-        # Update progress
-        self.callbacks.on_progress(10, "Loading PDF...")
+        # Update progress - Loading stage (0-10%)
+        progress = self._progress_calculator.calculate_pdf_progress("loading", 0, 1)
+        msg = self._status_formatter.format_pdf_status("loading")
+        self._force_progress_update(progress, msg)
+
+        # Check for cancellation before main processing
+        self._check_stopped()
+
+        # Update progress - Starting extraction (10-20%)
+        progress = self._progress_calculator.calculate_pdf_progress("page_processing", 0, 1)
+        msg = self._status_formatter.format_pdf_status("page_processing", current=0, total=1)
+        self._update_progress(progress, msg)
 
         # Process the PDF (synchronous - uses asyncio.run() internally)
-        self.callbacks.on_progress(20, "Extracting text from PDF...")
+        # Note: The actual PDF processing happens inside page_index_main
+        # which doesn't support interruption. We can only check before/after.
         result = page_index_main(self.file_path, opt)
 
-        self.callbacks.on_progress(100, "Processing complete!")
+        # Check for cancellation after processing
+        self._check_stopped()
+
+        # Update progress - Complete
+        progress = self._progress_calculator.calculate_pdf_progress("ai_inference", 1, 1)
+        msg = self._status_formatter.format_complete()
+        self._force_progress_update(progress, msg)
 
         return {
             'success': True,
@@ -138,14 +230,20 @@ class BackgroundProcessor(threading.Thread):
             'output_file': self._get_output_path(self.file_path)
         }
 
-    async def _process_file(self) -> Dict[str, Any]:
+    async def _process_file(self) -> dict[str, Any]:
         """Process the file asynchronously.
+
+        @MX:NOTE: Enhanced with cancellation support.
 
         Returns:
             Dictionary with processing results
         """
+        # Check for cancellation at start
+        await self._check_stopped_async()
+
         # Notify start
-        self.callbacks.on_progress(0, "Starting processing...")
+        msg = self._status_formatter.format_status("loading")
+        self._force_progress_update(0, msg)
 
         if self.file_type == 'pdf':
             return await self._process_pdf()
@@ -154,14 +252,19 @@ class BackgroundProcessor(threading.Thread):
         else:
             raise ValueError(f"Unsupported file type: {self.file_type}")
 
-    async def _process_pdf(self) -> Dict[str, Any]:
+    async def _process_pdf(self) -> dict[str, Any]:
         """Process PDF file.
+
+        @MX:NOTE: Enhanced with cancellation checkpoints.
 
         Returns:
             Dictionary with processing results
         """
-        from pageindex.page_index import page_index_main, config
+        from pageindex.page_index import page_index_main
         from pageindex.utils import ConfigLoader
+
+        # Check for cancellation
+        await self._check_stopped_async()
 
         # Load configuration
         loader = ConfigLoader()
@@ -178,19 +281,33 @@ class BackgroundProcessor(threading.Thread):
 
         # Add base_url if provided
         if self.config.get('base_url'):
-            import os
             os.environ['OPENAI_BASE_URL'] = self.config['base_url']
 
         opt = loader.load(user_config)
 
-        # Update progress
-        self.callbacks.on_progress(10, "Loading PDF...")
+        # Update progress - Loading stage
+        progress = self._progress_calculator.calculate_pdf_progress("loading", 0, 1)
+        msg = self._status_formatter.format_pdf_status("loading")
+        self._force_progress_update(progress, msg)
+
+        # Check for cancellation
+        await self._check_stopped_async()
+
+        # Update progress - Starting extraction
+        progress = self._progress_calculator.calculate_pdf_progress("page_processing", 0, 1)
+        msg = self._status_formatter.format_pdf_status("page_processing", current=0, total=1)
+        self._update_progress(progress, msg)
 
         # Process the PDF
-        self.callbacks.on_progress(20, "Extracting text from PDF...")
         result = page_index_main(self.file_path, opt)
 
-        self.callbacks.on_progress(100, "Processing complete!")
+        # Check for cancellation
+        await self._check_stopped_async()
+
+        # Update progress - Complete
+        progress = self._progress_calculator.calculate_pdf_progress("ai_inference", 1, 1)
+        msg = self._status_formatter.format_complete()
+        self._force_progress_update(progress, msg)
 
         return {
             'success': True,
@@ -200,14 +317,19 @@ class BackgroundProcessor(threading.Thread):
             'output_file': self._get_output_path(self.file_path)
         }
 
-    async def _process_markdown(self) -> Dict[str, Any]:
+    async def _process_markdown(self) -> dict[str, Any]:
         """Process Markdown file.
+
+        @MX:NOTE: Enhanced with cancellation checkpoints and progress tracking.
 
         Returns:
             Dictionary with processing results
         """
         from pageindex.page_index_md import md_to_tree
         from pageindex.utils import ConfigLoader
+
+        # Check for cancellation at start
+        await self._check_stopped_async()
 
         # Load configuration
         loader = ConfigLoader()
@@ -221,16 +343,27 @@ class BackgroundProcessor(threading.Thread):
 
         # Add base_url if provided
         if self.config.get('base_url'):
-            import os
             os.environ['OPENAI_BASE_URL'] = self.config['base_url']
 
         opt = loader.load(user_config)
 
-        # Update progress
-        self.callbacks.on_progress(10, "Loading Markdown file...")
+        # Update progress - Parsing stage (0-30%)
+        progress = self._progress_calculator.calculate_markdown_progress("parsing", 0, 1)
+        msg = self._status_formatter.format_markdown_status("parsing", progress_percent=0)
+        self._force_progress_update(progress, msg)
+
+        # Check for cancellation
+        await self._check_stopped_async()
+
+        # Update progress - Starting section analysis
+        progress = self._progress_calculator.calculate_markdown_progress("section_analysis", 0, 1)
+        msg = self._status_formatter.format_markdown_status("section_analysis", current=0, total=1)
+        self._update_progress(progress, msg)
+
+        # Check for cancellation
+        await self._check_stopped_async()
 
         # Process the markdown
-        self.callbacks.on_progress(20, "Parsing Markdown structure...")
         result = await md_to_tree(
             md_path=self.file_path,
             if_thinning=self.config.get('thinning_enabled', False),
@@ -243,7 +376,13 @@ class BackgroundProcessor(threading.Thread):
             if_add_node_id=opt.if_add_node_id == 'yes'
         )
 
-        self.callbacks.on_progress(100, "Processing complete!")
+        # Check for cancellation
+        await self._check_stopped_async()
+
+        # Update progress - Complete
+        progress = self._progress_calculator.calculate_markdown_progress("ai_inference", 1, 1)
+        msg = self._status_formatter.format_complete()
+        self._force_progress_update(progress, msg)
 
         return {
             'success': True,
@@ -268,19 +407,18 @@ class BackgroundProcessor(threading.Thread):
         return str(output_dir / f"{file_name}_structure.json")
 
 
-def save_result_to_file(result: Dict[str, Any], output_path: str) -> None:
-    """Save processing result to JSON file.
+def save_result_to_file(result: dict[str, Any], output_path: str) -> None:
+    """Save processing result to JSON file with atomic write.
+
+    @MX:NOTE: Uses atomic_write_json for data integrity.
 
     Args:
         result: Result dictionary from processing
         output_path: Path to save the output file
     """
-    import json
-
     # Create output directory if needed
     output_dir = Path(output_path).parent
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    # Save result
-    with open(output_path, 'w', encoding='utf-8') as f:
-        json.dump(result['result'], f, indent=2, ensure_ascii=False)
+    # Use atomic write for data integrity
+    atomic_write_json(output_path, result['result'])
