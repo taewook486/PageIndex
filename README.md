@@ -176,7 +176,8 @@ python3 run_pageindex_gui.py
 **GUI Features:**
 - 📄 Drag & drop file selection for PDF and Markdown files
 - ⚙️ Visual configuration panel with all CLI parameters
-- 📊 Real-time progress display during processing
+- 📊 **Enhanced progress display** (5% granularity with detailed status messages)
+- 🚫 **Working cancellation support** (cancel within 1 second with data integrity)
 - 🌳 Tree structure preview of results
 - 💾 Automatic result saving to `./results/` directory
 - 🌙 Dark mode support
