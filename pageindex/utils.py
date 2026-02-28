@@ -271,7 +271,7 @@ def ChatGPT_API(
             delay = Defaults.RETRY_DELAY * (2 ** i)
             logging.warning(f"Rate limit hit, retrying in {delay}s... (attempt {i + 1}/{max_retries})")
             if i < max_retries - 1:
-                time.sleep(min(delay, 10))  # Cap at 10 seconds
+                time.sleep(min(delay, 60))  # Cap at 60 seconds for strict rate limits
             else:
                 logging.error(f"{ErrorMessages.MAX_RETRIES_REACHED} for prompt: {prompt[:100]}...")
                 raise
@@ -335,7 +335,7 @@ async def ChatGPT_API_async(
             delay = Defaults.RETRY_DELAY * (2 ** i)
             logging.warning(f"Rate limit hit, retrying in {delay}s... (attempt {i + 1}/{max_retries})")
             if i < max_retries - 1:
-                await asyncio.sleep(min(delay, 10))  # Cap at 10 seconds
+                await asyncio.sleep(min(delay, 60))  # Cap at 60 seconds for strict rate limits
             else:
                 logging.error(f"{ErrorMessages.MAX_RETRIES_REACHED} for prompt: {prompt[:100]}...")
                 raise

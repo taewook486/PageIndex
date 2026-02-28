@@ -2,6 +2,13 @@
 requires = ["setuptools>=61.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
+[tool.setuptools]
+zip-safe = false
+
+[tool.setuptools.packages.find]
+include = ["pageindex*"]
+exclude = ["logs*", "daily*", "results*", "cookbook*", "tutorials*"]
+
 [project]
 name = "pageindex"
 version = "1.0.0"
@@ -33,7 +40,7 @@ dependencies = [
     "pydantic>=2.0.0",
     "customtkinter>=5.2.0",
     "cryptography>=41.0.0",
-    "fpdf>=2.7.0",
+    "fpdf2>=2.7.0",
     "jinja2>=3.1.0",
 ]
 

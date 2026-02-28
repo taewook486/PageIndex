@@ -635,6 +635,11 @@ def process_no_toc(page_list, start_index=1, model=None, logger=None):
     group_texts = page_list_to_group_text(page_contents, token_lengths)
     logger.info(f'len(group_texts): {len(group_texts)}')
 
+    # Handle empty group_texts (e.g., empty PDF or processing error)
+    if not group_texts:
+        logger.warning('group_texts is empty, returning empty TOC')
+        return []
+
     toc_with_page_number= generate_toc_init(group_texts[0], model)
     for group_text in group_texts[1:]:
         toc_with_page_number_additional = generate_toc_continue(toc_with_page_number, group_text, model)    
@@ -655,9 +660,15 @@ def process_toc_no_page_numbers(toc_content, toc_page_list, page_list,  start_in
         page_text = f"<physical_index_{page_index}>\n{page_list[page_index-start_index][0]}\n<physical_index_{page_index}>\n\n"
         page_contents.append(page_text)
         token_lengths.append(count_tokens(page_text, model))
-    
+
     group_texts = page_list_to_group_text(page_contents, token_lengths)
     logger.info(f'len(group_texts): {len(group_texts)}')
+
+    # Handle empty group_texts
+    if not group_texts:
+        logger.warning('group_texts is empty, returning TOC without page numbers')
+        toc_with_page_number = convert_physical_index_to_int(toc_content)
+        return toc_with_page_number
 
     toc_with_page_number=copy.deepcopy(toc_content)
     for group_text in group_texts:
